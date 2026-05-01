@@ -328,7 +328,7 @@ def generate_setup_delivery_sequence(fields_info, isocenter_mm):
     
     return lines, rs_ids
 
-def generate_pb_single_spot(energy, bm_energy_df, field_id=1, n_primaries=1,
+def generate_pb_single_spot(energy, bm_energy_df, field_id=1, n_weight=1,
                             alpha_x=None, beta_x=None, alpha_y=None, beta_y=None):
     """Generate pencil beam definition lines for a single centred spot.
     If new alpha and beta parameters are provided, they are used instead of the ones in the custom beam model."""
@@ -350,6 +350,7 @@ def generate_pb_single_spot(energy, bm_energy_df, field_id=1, n_primaries=1,
     beta_x  = beta_x  if beta_x  is not None else bm_params['betaX']
     alpha_y = alpha_y if alpha_y is not None else bm_params['alphaY']
     beta_y  = beta_y  if beta_y  is not None else bm_params['betaY']
+    n_calc = n_weight * bm_params['scalingFactor']
 
     # Single spot at field centre, reference plane
     px, py, pz = 0.0, 0.0, 0.0  # cm, at the reference plane (origin)
@@ -363,17 +364,17 @@ def generate_pb_single_spot(energy, bm_energy_df, field_id=1, n_primaries=1,
         f"pb: {1:<10d} {int(field_id):<4d} \t"
         f"{format_scientific(px)} {format_scientific(py)} {format_scientific(pz)}   "
         f"{format_scientific(vx)} {format_scientific(vy)} {format_scientific(vz)}   "
-        f"{energy:7.3f} {estdev:.5E}   {n_primaries:.10E}   "
+        f"{energy:7.3f} {estdev:.5E}   {n_calc:.10E}   "
         f"{format_scientific(alpha_x)} {format_scientific(beta_x)} {format_scientific(epsilon_x)}   "
         f"{format_scientific(alpha_y)} {format_scientific(beta_y)} {format_scientific(epsilon_y)}"
     )
     lines.append(line)
 
-    return lines, n_primaries
+    return lines, n_calc
 
 
 def generate_inp_file_single_spot(bm_file, energy, gantry_angle=0.0, couch_angle=0.0, snout_pos_mm=200.0,
-                                  isocenter=None, n_primaries=1, rs_id=None, rs_setting=None,
+                                  isocenter=None, n_weight=1, rs_id=None, rs_setting=None,
                                   alpha_x=None, beta_x=None, alpha_y=None, beta_y=None,
                                   output_dir="rtplans"):
     """
@@ -395,7 +396,7 @@ def generate_inp_file_single_spot(bm_file, energy, gantry_angle=0.0, couch_angle
     output_path.mkdir(parents=True, exist_ok=True)
 
     field_id = int(fields_info.iloc[0]['FDeliveryNo'])
-    pb_lines, total_primaries = generate_pb_single_spot(energy, bm_energy_df, field_id, n_primaries,
+    pb_lines, total_primaries = generate_pb_single_spot(energy, bm_energy_df, field_id, n_weight,
                                                         alpha_x, beta_x, alpha_y, beta_y)
 
     print(f"Generating .inp file for single spot at {energy:.3f} MeV...")
@@ -422,7 +423,7 @@ def generate_inp_file_single_spot(bm_file, energy, gantry_angle=0.0, couch_angle
 
 
 def generate_fred_inp(rtplan_inp_filename, regions_filename, output_dir='freds', ct_file='CT.mhd',
-                      nprim=1e4, ionization_potential=78.0,
+                      nprim=5e4, ionization_potential=78.0,
                       materials_file='materials.inp', rtplan_dir = "rtplans", regions_dir = "regions"):
     """
     Generate FRED main simulation input file for a single rtplan .inp.
@@ -607,7 +608,7 @@ def main():
             couch_angle=args.couch_angle,
             snout_pos_mm=args.snout_pos,
             isocenter=args.isocenter,
-            n_primaries=args.n_weight,
+            n_weight=args.n_weight,
             alpha_x=args.alpha_x,
             beta_x=args.beta_x,
             alpha_y=args.alpha_y,
