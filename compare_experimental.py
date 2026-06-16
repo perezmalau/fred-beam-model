@@ -17,6 +17,16 @@ def gaussian_2d(xy, amplitude, x0, z0, sigma_x, sigma_z, offset):
         ) + offset
     ).ravel()
 
+def _build_circular_mask(nz, nx, dz, dx, radius_mm):
+    """Build a 2D boolean mask of voxels whose centres lie within `radius_mm`
+    of the central voxel of an (nz, nx) slice. Computed once, reused for all depths."""
+    # Voxel-centre coordinates relative to array centre
+    z = (np.arange(nz) - (nz - 1) / 2.0) * dz
+    x = (np.arange(nx) - (nx - 1) / 2.0) * dx
+    zz, xx = np.meshgrid(z, x, indexing='ij')
+    r2 = zz ** 2 + xx ** 2
+    return r2 <= radius_mm ** 2
+
 def get_experimental_sigmas_air(energy):
     df = pd.read_excel("UCLH_Spot_Profiles_All_Sigmas.xlsx", sheet_name="Sheet3")
     row = df[df["Energy"] == energy]
@@ -25,17 +35,22 @@ def get_experimental_sigmas_air(energy):
     sigma_y = [row[f"sigmaY_{int(d/10)}"] for d in distances_mm]
     return sigma_x, sigma_y
 
-def get_experimental_IDD_water(energy, norm=False):
+def get_experimental_IDD_water(energy):
     """Retrieve experimental data from IDD measurements for a given energy."""
     df = pd.read_excel("UCLH_reference_IDD.xlsx", sheet_name=str(energy))
-    depths = df['Depth (mm)']
-    if norm:
-        dose = df['Dose (normalised to 1.0 at 20mm deep)']
-    else:
-        dose = df['Dose (Gy/MU/mm^2)']
-    return depths, dose
+    x = df['Depth (mm)']
+    y = df['Dose (normalised to 1.0 at 20mm deep)']
+    return x, y
 
-def get_fred_IDD(energy, norm=False, norm_depth=20):
+
+def get_experimental_IDD_water_abs(energy):
+    """Retrieve experimental data from IDD measurements for a given energy, no normalisation."""
+    df = pd.read_excel("UCLH_reference_IDD.xlsx", sheet_name=str(energy))
+    x = df['Depth (mm)']
+    y = df['Dose (Gy/MU/mm^2)']
+    return x, y
+
+def get_fred_IDD(energy, norm_depth=20):
     """Retrieve MC IDD, option to normalise to a given depth."""
     dose_img = ft.readMHD(f"out_{energy:.1f}MeV/Dose.mhd")
     dose_array = sitk.GetArrayFromImage(dose_img)
@@ -44,12 +59,90 @@ def get_fred_IDD(energy, norm=False, norm_depth=20):
     depths = np.arange(ny) * dy
 
     idd = np.sum(dose_array, axis=(0, 2)) #/ (nx * dx * nz * dz)
-
-    if norm:
-        dose_at_norm = float(np.interp(norm_depth, depths, idd))
-        idd = idd / dose_at_norm
+    dose_at_norm = float(np.interp(norm_depth, depths, idd))
+    idd = idd / dose_at_norm
 
     return depths, idd
+
+# Protons per MU at each nominal energy (scalingFactor column of beam model)
+PROTONS_PER_MU = {
+    85: 2.35e6,
+    90: 2.448e6,
+    95: 2.546e6,
+    100: 2.642e6,
+    105: 2.737e6,
+    110: 2.831e6,
+    115: 2.923e6,
+    120: 3.013e6,
+    125: 3.103e6,
+    130: 3.191e6,
+    135: 3.27e6,
+    140: 3.362e6,
+    145: 3.446e6,
+    150: 3.529e6,
+    185: 4.07e6,
+    205: 4.356e6,
+    220: 4.48e6,
+    235: 4.74e6,
+    240: 4.688e6,
+    245: 4.688e6,
+    # add the rest as needed
+}
+
+
+def get_fred_IDD_abs(energy, aperture_radius_mm=40.8, n_sim=5e4):
+    """
+    Compute the integral depth dose from a FRED dose-to-water MHD file in
+    units of Gy / MU / mm² (broad-field equivalent dose representation).
+
+    Parameters
+    ----------
+    energy : int or float
+        Beam energy, used to locate the output folder and the protons/MU.
+    aperture_radius_mm : float or None
+        Defaults to 40.8 mm to match the standard PTW Bragg Peak Chamber.
+        If None, falls back to full lateral integration.
+    n_sim : float
+        Number of primaries simulated in FRED.
+    """
+    # Loading biological dose directly (inherently contains the 1.1 RBE multiplier)
+    dose_img = ft.readMHD(f"out_{energy:.1f}MeV/RBE/Phantom.DoseBio_Constant.mhd")
+    dose_array = sitk.GetArrayFromImage(dose_img)
+    dx, dy, dz = dose_img.GetSpacing()  # mm
+    nz, ny, nx = dose_array.shape
+    depths = np.arange(ny) * dy
+
+    # 1. ALWAYS calculate the full, unmasked lateral sum for absolute energy scaling
+    total_slice_sum = dose_array.sum(axis=(0, 2))
+
+    # 2. Calculate the masked sum to match the physical chamber shape
+    if aperture_radius_mm is None:
+        slice_sum_shape = total_slice_sum
+    else:
+        mask = _build_circular_mask(nz, nx, dz, dx, aperture_radius_mm)
+        slice_sum_shape = (dose_array * mask[:, None, :]).sum(axis=(0, 2))
+
+    # 3. CRITICAL CRITERIA: Re-introduce the voxel area factor (dx * dz)
+    # This converts raw voxel values to an extensive quantity (Gy·mm²)
+    idd_gy_mm2_shape = slice_sum_shape * dx * dz
+    idd_gy_mm2_total = total_slice_sum * dx * dz
+
+    # 4. Calculate the Halo Correction Factor at a reference depth of 2.0 cm (20 mm)
+    # This finds the closest voxel slice index corresponding to 20 mm depth
+    ref_depth_mm = 20.0
+    ref_idx = np.argmin(np.abs(depths - ref_depth_mm))
+
+    # Correction Factor = Total Energy / Masked Chamber Energy (at 2cm)
+    halo_correction_factor = idd_gy_mm2_total[ref_idx] / idd_gy_mm2_shape[ref_idx]
+
+    # 5. Convert from "per simulated proton" to "per MU"
+    protons_per_mu = PROTONS_PER_MU[energy]
+    idd_per_mu = idd_gy_mm2_shape / n_sim * protons_per_mu
+
+    # 6. Apply the Halo Correction to scale the shape to the absolute broad-field magnitude
+    idd_absolute = idd_per_mu * halo_correction_factor
+
+    return depths, idd_absolute
 
 def get_fred_sigmas(energy, dist):
     """Retrieve MC sigmas from a 2D gaussian fit at a given distance from isocentre in mm."""
@@ -98,11 +191,14 @@ def get_fred_sigmas(energy, dist):
     return sigma_x, sigma_z, popt
 
 
-def compare_IDD(energy, norm=False):
+def compare_IDD(energy, abs=False):
     """Plots the relevant IDDs and calculates the ratio/scaling between the two."""
-    x_exp, y_exp = get_experimental_IDD_water(energy, norm=norm)
-    x_fred, y_fred = get_fred_IDD(energy, norm=norm)
-
+    if abs: # compare with absolute IDD values
+        x_exp, y_exp = get_experimental_IDD_water_abs(energy)
+        x_fred, y_fred = get_fred_IDD_abs(energy)
+    else:    # compare normalised IDD curves
+        x_exp, y_exp = get_experimental_IDD_water(energy)
+        x_fred, y_fred = get_fred_IDD(energy)
     x_interp = np.linspace(7, 400, 397)
     interp_exp = interp1d(x_exp, y_exp, bounds_error=False, fill_value=0)
     interp_fred = interp1d(x_fred, y_fred, bounds_error=False, fill_value=0)
@@ -149,11 +245,11 @@ def compare_sigmas(energy):
     plt.title(f'{energy} MeV beam', fontweight='bold')
     plt.show()
 
-
-energies = [80, 100, 120, 140, 160, 180, 200]
+#TODO: absolute values are not being calculated correctly
+energies = [150]
 for energy in energies:
     # Uncomment if you just ran a simulation with the water CT
-    # compare_IDD(e, norm=False)
+    #compare_IDD(energy, abs=True)
 
-    # Uncomment if ran a simulation with the water CT
+    # Uncomment if ran a simulation with the air CT
     compare_sigmas(energy)
