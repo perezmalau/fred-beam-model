@@ -64,21 +64,20 @@ def run_fred(energy):
 # =============================================================================
 
 BM_FILE = "CustomBeamModel.bm"
-CT_FILE = "CT_altered.mhd"
+CT_FILE = "CT.mhd"
 FRED_EXE = "fred"
-ENERGIES = [80, 100, 120, 140, 160, 180, 200]  # MeV
+ENERGIES = [80, 100, 120, 140, 160, 180, 200, 220]  # MeV
 
 # Shared beam / geometry settings
 GANTRY_ANGLE = 0.0
 COUCH_ANGLE = 0.0
 SNOUT_POS_MM = 200.0
 ISOCENTER_MM = [0.0, 0.0, 0.0]
-NPRIM = 5E4
+NPRIM = 1E6
 
 # =============================================================================
 
 if __name__ == "__main__":
-    # clear before the energy sweep
     clear_directories("rtplans", "freds", "regions")
     remove_out_folders()
 
@@ -95,7 +94,6 @@ if __name__ == "__main__":
             print(f"  ERROR: input generation failed for {energy:.1f} MeV")
             continue
 
-        # Step 2: run FRED
         sim = run_fred(energy)
         if sim.returncode != 0:
             print(f"  ERROR: FRED failed for {energy:.1f} MeV")

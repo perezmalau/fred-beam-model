@@ -350,7 +350,7 @@ def generate_pb_single_spot(energy, bm_energy_df, field_id=1, n_weight=1,
     beta_x  = beta_x  if beta_x  is not None else bm_params['betaX']
     alpha_y = alpha_y if alpha_y is not None else bm_params['alphaY']
     beta_y  = beta_y  if beta_y  is not None else bm_params['betaY']
-    #n_calc = n_weight * bm_params['scalingFactor']
+    n_calc = n_weight * bm_params['scalingFactor']
 
     # Single spot at field centre, reference plane
     px, py, pz = 0.0, 0.0, 0.0  # cm, at the reference plane (origin)
@@ -365,13 +365,13 @@ def generate_pb_single_spot(energy, bm_energy_df, field_id=1, n_weight=1,
         f"pb: {1:<10d} {int(field_id):<4d} \t"
         f"{format_scientific(px)} {format_scientific(py)} {format_scientific(pz)}   "
         f"{format_scientific(vx)} {format_scientific(vy)} {format_scientific(vz)}   "
-        f"{energy_delivered:7.3f} {estdev:.5E}   {n_weight:.10E}   "
+        f"{energy_delivered:7.3f} {estdev:.5E}   {n_calc:.10E}   "
         f"{format_scientific(alpha_x)} {format_scientific(beta_x)} {format_scientific(epsilon_x)}   "
         f"{format_scientific(alpha_y)} {format_scientific(beta_y)} {format_scientific(epsilon_y)}"
     )
     lines.append(line)
 
-    return lines, n_weight
+    return lines, n_calc
 
 
 def generate_inp_file_single_spot(bm_file, energy, gantry_angle=0.0, couch_angle=0.0, snout_pos_mm=200.0,

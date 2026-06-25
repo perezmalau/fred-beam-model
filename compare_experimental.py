@@ -50,47 +50,25 @@ def get_experimental_IDD_water_abs(energy):
     y = df['Dose (Gy/MU/mm^2)']
     return x, y
 
-def get_fred_IDD(energy, norm_depth=20):
+def get_fred_IDD(energy, norm_depth=20, aperture_radius_mm=40.8):
     """Retrieve MC IDD, option to normalise to a given depth."""
     dose_img = ft.readMHD(f"out_{energy:.1f}MeV/Dose.mhd")
     dose_array = sitk.GetArrayFromImage(dose_img)
     dx, dy, dz = dose_img.GetSpacing()
     nz, ny, nx = dose_array.shape
     depths = np.arange(ny) * dy
-
-    idd = np.sum(dose_array, axis=(0, 2)) #/ (nx * dx * nz * dz)
-    dose_at_norm = float(np.interp(norm_depth, depths, idd))
-    idd = idd / dose_at_norm
+    if aperture_radius_mm is None:
+        idd_raw = np.sum(dose_array, axis=(0, 2))
+    else:
+        mask = _build_circular_mask(nz, nx, dz, dx, aperture_radius_mm)
+        idd_raw = (dose_array * mask[:, None, :]).sum(axis=(0, 2)) # Gy/MU
+    dose_at_norm = float(np.interp(norm_depth, depths, idd_raw))
+    idd = idd_raw / dose_at_norm
 
     return depths, idd
 
-# Protons per MU at each nominal energy (scalingFactor column of beam model)
-PROTONS_PER_MU = {
-    85: 2.35e6,
-    90: 2.448e6,
-    95: 2.546e6,
-    100: 2.642e6,
-    105: 2.737e6,
-    110: 2.831e6,
-    115: 2.923e6,
-    120: 3.013e6,
-    125: 3.103e6,
-    130: 3.191e6,
-    135: 3.27e6,
-    140: 3.362e6,
-    145: 3.446e6,
-    150: 3.529e6,
-    185: 4.07e6,
-    205: 4.356e6,
-    220: 4.48e6,
-    235: 4.74e6,
-    240: 4.688e6,
-    245: 4.688e6,
-    # add the rest as needed
-}
 
-
-def get_fred_IDD_abs(energy, aperture_radius_mm=40.8, n_sim=5e4):
+def get_fred_IDD_abs(energy, aperture_radius_mm=40.8):
     """
     Compute the integral depth dose from a FRED dose-to-water MHD file in
     units of Gy / MU / mm² (broad-field equivalent dose representation).
@@ -136,8 +114,9 @@ def get_fred_IDD_abs(energy, aperture_radius_mm=40.8, n_sim=5e4):
     halo_correction_factor = idd_gy_mm2_total[ref_idx] / idd_gy_mm2_shape[ref_idx]
 
     # 5. Convert from "per simulated proton" to "per MU"
-    protons_per_mu = PROTONS_PER_MU[energy]
-    idd_per_mu = idd_gy_mm2_shape / n_sim * protons_per_mu
+    # TODO: Not necessary if we account for them in FRED directly
+    #protons_per_mu = PROTONS_PER_MU[energy]
+    idd_per_mu = idd_gy_mm2_shape #/ n_sim * protons_per_mu
 
     # 6. Apply the Halo Correction to scale the shape to the absolute broad-field magnitude
     idd_absolute = idd_per_mu * halo_correction_factor
@@ -196,10 +175,12 @@ def compare_IDD(energy, abs=False):
     if abs: # compare with absolute IDD values
         x_exp, y_exp = get_experimental_IDD_water_abs(energy)
         x_fred, y_fred = get_fred_IDD_abs(energy)
+        ylabel = 'IDD (Gy/MU/mm$^2$)'
     else:    # compare normalised IDD curves
         x_exp, y_exp = get_experimental_IDD_water(energy)
         x_fred, y_fred = get_fred_IDD(energy)
-    x_interp = np.linspace(7, 400, 397)
+        ylabel = 'IDD (normalised to 1.0 at 20mm deep)'
+    x_interp = np.linspace(7, 400, 3970)
     interp_exp = interp1d(x_exp, y_exp, bounds_error=False, fill_value=0)
     interp_fred = interp1d(x_fred, y_fred, bounds_error=False, fill_value=0)
 
@@ -211,7 +192,7 @@ def compare_IDD(energy, abs=False):
     plt.plot(x_interp, y_fred_interp, label='FRED')
     plt.legend()
     plt.xlabel('Depth (mm)')
-    plt.ylabel('IDD')
+    plt.ylabel(ylabel)
     plt.title(f'{energy} MeV beam', fontweight='bold')
     plt.show()
 
@@ -245,11 +226,114 @@ def compare_sigmas(energy):
     plt.title(f'{energy} MeV beam', fontweight='bold')
     plt.show()
 
-#TODO: absolute values are not being calculated correctly
-energies = [150]
-for energy in energies:
-    # Uncomment if you just ran a simulation with the water CT
-    #compare_IDD(energy, abs=True)
+def plot_IDD_comparison_grid(abs=False):
 
-    # Uncomment if ran a simulation with the air CT
-    compare_sigmas(energy)
+    if abs:
+        ylabel = 'IDD (Gy/MU/mm$^2$)'
+    else:
+        ylabel = 'IDD (normalised to 1.0 at 20 mm depth)'
+
+    fig, axes = plt.subplots(2, 4, figsize=(18, 10), sharex=True, sharey=True)
+    axes = axes.flatten()
+
+    for ax, energy in zip(axes, ENERGIES):
+
+        if abs:
+            x_exp, y_exp = get_experimental_IDD_water_abs(energy)
+            x_fred, y_fred = get_fred_IDD_abs(energy)
+        else:
+            x_exp, y_exp = get_experimental_IDD_water(energy)
+            x_fred, y_fred = get_fred_IDD(energy)
+
+        x_interp = np.linspace(7, 400, 3970)
+
+        interp_exp = interp1d(
+            x_exp, y_exp,
+            bounds_error=False,
+            fill_value=0
+        )
+
+        interp_fred = interp1d(
+            x_fred, y_fred,
+            bounds_error=False,
+            fill_value=0
+        )
+
+        y_exp_interp = interp_exp(x_interp)
+        y_fred_interp = interp_fred(x_interp)
+
+        ax.plot(x_interp, y_exp_interp, label='Experimental')
+        ax.plot(x_interp, y_fred_interp, label='FRED')
+
+        ax.set_title(f'{energy} MeV')
+        ax.grid(alpha=0.3)
+
+    # Common labels
+    fig.supxlabel('Depth (mm)')
+    fig.supylabel(ylabel)
+
+    # Single legend for entire figure
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc='upper center', ncol=2)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
+    plt.show()
+
+
+def plot_sigma_comparison_grid():
+
+    fig, axes = plt.subplots(2, 4, figsize=(18, 10), sharex=True, sharey=True)
+    axes = axes.flatten()
+
+    for ax, energy in zip(axes, ENERGIES):
+
+        sigmasX_exp, sigmasY_exp = get_experimental_sigmas_air(energy)
+
+        sigmasX_fred = []
+        sigmasY_fred = []
+
+        for d in distances_mm:
+            sx, sy, _ = get_fred_sigmas(energy, d)
+            sigmasX_fred.append(sx)
+            sigmasY_fred.append(sy)
+
+        ax.plot(
+            distances_mm, sigmasX_exp,
+            'x-', color='orange',
+            label=r'Experimental $\sigma_x$'
+        )
+
+        ax.plot(
+            distances_mm, sigmasX_fred,
+            'o-', color='orange',
+            label=r'FRED $\sigma_x$'
+        )
+
+        ax.plot(
+            distances_mm, sigmasY_exp,
+            'x-', color='blue',
+            label=r'Experimental $\sigma_y$'
+        )
+
+        ax.plot(
+            distances_mm, sigmasY_fred,
+            'o-', color='blue',
+            label=r'FRED $\sigma_y$'
+        )
+
+        ax.set_title(f'{energy} MeV')
+        ax.grid(alpha=0.3)
+
+    fig.supxlabel('Distance from isocentre (mm)')
+    fig.supylabel(r'$\sigma$ (mm)')
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc='upper center', ncol=4)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    plt.show()
+
+ENERGIES = [80, 100, 120, 140, 160, 180, 200, 220]  # MeV
+
+# plot_IDD_comparison_grid(abs=True)
+plot_sigma_comparison_grid()
