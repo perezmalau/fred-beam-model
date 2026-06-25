@@ -282,7 +282,7 @@ def plot_IDD_comparison_grid(abs=False):
 
 def plot_sigma_comparison_grid():
 
-    fig, axes = plt.subplots(2, 4, figsize=(18, 10), sharex=True, sharey=True)
+    fig, axes = plt.subplots(2, 4, figsize=(18, 10), sharex=True)
     axes = axes.flatten()
 
     for ax, energy in zip(axes, ENERGIES):
@@ -297,29 +297,21 @@ def plot_sigma_comparison_grid():
             sigmasX_fred.append(sx)
             sigmasY_fred.append(sy)
 
-        ax.plot(
-            distances_mm, sigmasX_exp,
-            'x-', color='orange',
-            label=r'Experimental $\sigma_x$'
-        )
+        ax.plot(distances_mm, sigmasX_exp,
+                color='k', marker='o', linestyle='-',
+                label=r'Exp $\sigma_x$')
 
-        ax.plot(
-            distances_mm, sigmasX_fred,
-            'o-', color='orange',
-            label=r'FRED $\sigma_x$'
-        )
+        ax.plot(distances_mm, sigmasY_exp,
+                color='k', marker='s', linestyle='-',
+                label=r'Exp $\sigma_y$')
 
-        ax.plot(
-            distances_mm, sigmasY_exp,
-            'x-', color='blue',
-            label=r'Experimental $\sigma_y$'
-        )
+        ax.plot(distances_mm, sigmasX_fred,
+                color='tab:red', marker='o', linestyle='--',
+                label=r'FRED $\sigma_x$')
 
-        ax.plot(
-            distances_mm, sigmasY_fred,
-            'o-', color='blue',
-            label=r'FRED $\sigma_y$'
-        )
+        ax.plot(distances_mm, sigmasY_fred,
+                color='tab:red', marker='s', linestyle='--',
+                label=r'FRED $\sigma_y$')
 
         ax.set_title(f'{energy} MeV')
         ax.grid(alpha=0.3)
